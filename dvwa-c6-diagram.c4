@@ -1,0 +1,17 @@
+@startuml
+!include <C4/C4_Context>
+LAYOUT_TOP_DOWN()
+
+Person(admin, "Administrator")
+Person(user, "User")
+System_Boundary(dvwa_system, "DVWA Deployment") {
+  System(dvwa_web, "DVWA Web Server", "Apache2 with PHP", "Web application vulnerable for testing.")
+  System_Ext(gcp_load_balancer, "GCP Load Balancer", "HTTPS Load Balancer", "Manages traffic and provides HTTPS termination.")
+  System_Ext(gcp_cloud_armor, "GCP Cloud Armor", "DDoS Protection", "Mitigates Layer 7 attacks.")
+}
+
+Rel(admin, dvwa_web, "Deploys and manages the app")
+Rel(user, gcp_load_balancer, "Accesses DVWA via HTTPS")
+Rel(gcp_load_balancer, dvwa_web, "Routes traffic")
+Rel(gcp_cloud_armor, gcp_load_balancer, "Filters malicious traffic")
+@enduml
