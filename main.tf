@@ -1,4 +1,5 @@
-# Terraform Provider Configuration
+# Main Terraform Configuration File with Security Best Practices
+
 provider "google" {
   project = var.project_id
   region  = var.region
@@ -7,6 +8,14 @@ provider "google" {
 # Network Configuration
 resource "google_compute_network" "dvwa_network" {
   name = "dvwa-network"
+  auto_create_subnetworks = false
+}
+
+resource "google_compute_subnetwork" "dvwa_subnetwork" {
+  name          = "dvwa-subnetwork"
+  network       = google_compute_network.dvwa_network.id
+  ip_cidr_range = "10.0.0.0/24"
+  region        = var.region
 }
 
 resource "google_compute_firewall" "dvwa_firewall" {
@@ -20,6 +29,18 @@ resource "google_compute_firewall" "dvwa_firewall" {
 
   source_ranges = ["0.0.0.0/0"]
   target_tags   = ["dvwa-web"]
+}
+
+resource "google_compute_firewall" "dvwa_internal" {
+  name    = "dvwa-allow-internal"
+  network = google_compute_network.dvwa_network.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22", "80", "443"]
+  }
+
+  source_ranges = ["10.0.0.0/24"]
 }
 
 # Compute Instance for DVWA
@@ -36,17 +57,76 @@ resource "google_compute_instance" "dvwa_instance" {
   }
 
   network_interface {
-    network = google_compute_network.dvwa_network.name
+    subnetwork   = google_compute_subnetwork.dvwa_subnetwork.name
     access_config {}
   }
 
   metadata_startup_script = <<-EOT
     #!/bin/bash
-    apt-get update && apt-get install -y apache2 php php-mysql mysql-client git
+    apt-get update && apt-get install -y apache2 php php-mysql mysql-client git ufw fail2ban unattended-upgrades openssl
+
+    # Secure Linux Configuration
+    ufw default deny incoming
+    ufw default allow outgoing
+    ufw allow 22/tcp
+    ufw allow 443/tcp
+    ufw enable
+
+    echo "- Configure automatic security updates -"
+    dpkg-reconfigure -f noninteractive unattended-upgrades
+
+    echo "- Setup fail2ban for SSH protection -"
+    cat <<FAIL2BAN > /etc/fail2ban/jail.local
+    [sshd]
+    enabled = true
+    port = ssh
+    logpath = /var/log/auth.log
+    maxretry = 5
+    FAIL2BAN
+    systemctl restart fail2ban
+
+    # Clone DVWA repository
     git clone https://github.com/digininja/DVWA.git /var/www/html
     chown -R www-data:www-data /var/www/html
     chmod -R 755 /var/www/html
-    service apache2 restart
+
+    # Enable SSL modules and create self-signed certificate
+    a2enmod ssl
+    mkdir -p /etc/apache2/ssl
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+      -keyout /etc/apache2/ssl/apache-selfsigned.key \
+      -out /etc/apache2/ssl/apache-selfsigned.crt \
+      -subj "/C=US/ST=State/L=City/O=Organization/OU=OrgUnit/CN=localhost"
+
+    # Configure default SSL site
+    cat <<EOF > /etc/apache2/sites-available/default-ssl.conf
+    <IfModule mod_ssl.c>
+      <VirtualHost *:443>
+        ServerAdmin webmaster@localhost
+        DocumentRoot /var/www/html
+
+        SSLEngine on
+        SSLCertificateFile /etc/apache2/ssl/apache-selfsigned.crt
+        SSLCertificateKeyFile /etc/apache2/ssl/apache-selfsigned.key
+
+        <FilesMatch "\.(cgi|shtml|phtml|php)$">
+          SSLOptions +StdEnvVars
+        </FilesMatch>
+        <Directory /usr/lib/cgi-bin>
+          SSLOptions +StdEnvVars
+        </Directory>
+
+        ErrorLog /var/log/apache2/error.log
+        CustomLog /var/log/apache2/access.log combined
+
+      </VirtualHost>
+    </IfModule>
+    EOF
+
+    a2ensite default-ssl.conf
+
+    # Restart Apache to apply changes
+    systemctl restart apache2
   EOT
 }
 
@@ -156,5 +236,6 @@ resource "google_monitoring_alert_policy" "dvwa_alert_policy" {
     }
   }
 
-  notification_channels = ["projects/${var.project_id}/notificationChannels/ID_ADD"]
+  notification_channels = ["projects/${var.project_id}/notificationChannels/ID_Add"]
 }
+
