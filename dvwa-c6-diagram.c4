@@ -1,17 +1,55 @@
 @startuml
-!include <C4/C4_Context>
-LAYOUT_TOP_DOWN()
 
-Person(admin, "Administrator")
-Person(user, "User")
-System_Boundary(dvwa_system, "DVWA Deployment") {
-  System(dvwa_web, "DVWA Web Server", "Apache2 with PHP", "Web application vulnerable for testing.")
-  System_Ext(gcp_load_balancer, "GCP Load Balancer", "HTTPS Load Balancer", "Manages traffic and provides HTTPS termination.")
-  System_Ext(gcp_cloud_armor, "GCP Cloud Armor", "DDoS Protection", "Mitigates Layer 7 attacks.")
+skinparam cloudBackgroundColor White
+skinparam cloudFontColor Black
+skinparam cloudFontSize 14
+skinparam rectangleFontSize 12
+
+' Define components
+cloud "Google Cloud Platform" {
+    rectangle "VPC Network: dvwa-network" as vpc {
+        rectangle "Subnetwork: dvwa-subnetwork" as subnetwork
+        rectangle "Firewall Rules" as firewall {
+            component "Allow HTTPS (Port 443)" as https_rule
+            component "Allow Internal Traffic" as internal_rule
+        }
+    }
+    
+    rectangle "Compute Instance: dvwa-instance" as instance
+    component "Managed SSL Certificate" as ssl_cert
+    component "Health Check: dvwa-health-check" as health_check
+    
+    rectangle "Load Balancer" as lb {
+        component "Backend Service: dvwa-backend" as backend_service
+        component "URL Map: dvwa-url-map" as url_map
+        component "Target HTTPS Proxy" as https_proxy
+        component "Global Forwarding Rule" as forwarding_rule
+    }
+
+    rectangle "Global IP: dvwa-ip" as global_ip
+    rectangle "Cloud Armor Security Policy" as cloud_armor
+    rectangle "Logging & Monitoring" as logging {
+        component "Logging Metric: dvwa-http-traffic" as logging_metric
+        component "Alert Policy: dvwa-alert-policy" as alert_policy
+    }
 }
 
-Rel(admin, dvwa_web, "Deploys and manages the app")
-Rel(user, gcp_load_balancer, "Accesses DVWA via HTTPS")
-Rel(gcp_load_balancer, dvwa_web, "Routes traffic")
-Rel(gcp_cloud_armor, gcp_load_balancer, "Filters malicious traffic")
+' Relationships
+subnetwork --> instance
+instance --> ssl_cert
+instance --> firewall
+firewall --> https_rule
+firewall --> internal_rule
+instance --> health_check
+
+backend_service --> health_check
+backend_service --> cloud_armor
+url_map --> backend_service
+https_proxy --> url_map
+forwarding_rule --> https_proxy
+forwarding_rule --> global_ip
+
+logging_metric --> alert_policy
+instance --> logging_metric
+
 @enduml
